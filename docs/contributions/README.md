@@ -10,16 +10,22 @@ This folder contains patches and proposals ready to submit upstream to [rexglue/
 4. **Verifiable.** Every patch includes test evidence and reproduction steps.
 5. **Documentation-first.** Each PR includes a clear problem statement, root-cause analysis, and rationale.
 
-## Pending PRs
+## Live contributions
 
-| # | Title | Files | Status |
-|---|-------|-------|--------|
-| [01](pr01-issuecopy-diagnostics/) | Add EDRAM resolve diagnostic instrumentation | `src/graphics/d3d12/command_processor.cpp` | ✅ Ready |
-| [02](pr02-readback-path-logging/) | Log `IssueCopy_ReadbackResolvePath` results | `src/graphics/d3d12/command_processor.cpp` | ✅ Ready |
-| [03](pr03-issuedraw-edram-mode-trace/) | Trace `RB_MODECONTROL.edram_mode` per draw (gated, low-overhead) | `src/graphics/d3d12/command_processor.cpp` | ✅ Ready |
-| [04](pr04-codegen-config-ea-jumptable/) | Codegen analyzer: detect EA's PPC jump-table pattern | `include/rex/codegen/config.h`, `src/codegen/function_scanner.cpp` | 📝 Proposal |
-| [05](pr05-vp6-bridge-template/) | VP6 decoder bridge as optional `rex::audio::vp6` module | New module | 📝 Proposal |
-| [06](pr06-defensive-vtable-skip/) | Defensive vtable-NULL-skip helper macro | `include/rex/hooks/defensive.h` | 📝 Proposal |
+All six contributions were submitted to upstream `rexglue/rexglue-sdk` on 2026-04-29:
+
+| # | Title | Type | Live link |
+|---|-------|------|-----------|
+| [01](pr01-issuecopy-diagnostics/) | Add EDRAM resolve diagnostic instrumentation | PR (code) | **[PR #300](https://github.com/rexglue/rexglue-sdk/pull/300)** |
+| [02](pr02-readback-path-logging/) | Log `IssueCopy_ReadbackResolvePath` results | PR (code) | **[PR #301](https://github.com/rexglue/rexglue-sdk/pull/301)** |
+| [03](pr03-issuedraw-edram-mode-trace/) | Trace `RB_MODECONTROL.edram_mode` per draw | PR (code) | **[PR #302](https://github.com/rexglue/rexglue-sdk/pull/302)** |
+| [04](pr04-codegen-config-ea-jumptable/) | Codegen analyzer: detect EA's PPC jump-table pattern | Issue (proposal) | **[Issue #303](https://github.com/rexglue/rexglue-sdk/issues/303)** |
+| [05](pr05-vp6-bridge-template/) | Optional `rex::video::vp6` module (libavcodec wrapper) | Issue (proposal) | **[Issue #304](https://github.com/rexglue/rexglue-sdk/issues/304)** |
+| [06](pr06-defensive-vtable-skip/) | Defensive vtable-NULL-skip helper macro | Issue (proposal) | **[Issue #305](https://github.com/rexglue/rexglue-sdk/issues/305)** |
+
+PRs 01–03 are code patches against `src/graphics/d3d12/command_processor.cpp` (~73 lines combined). Issues 04–06 are design proposals open for maintainer feedback before implementation.
+
+A backup branch [`backup/full-skate3-research-20260429`](https://github.com/xdzleo/rexglue-sdk/tree/backup/full-skate3-research-20260429) on the fork preserves the full uncurated research diff (20 unpublished commits + the WIP working tree) for reference.
 
 ## Submitting a PR
 
