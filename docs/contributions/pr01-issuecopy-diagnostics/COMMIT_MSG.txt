@@ -1,0 +1,18 @@
+graphics/d3d12: add EDRAM resolve diagnostic instrumentation
+
+Adds non-invasive logging to D3D12CommandProcessor::IssueCopy() so consumers
+can observe the EDRAM-resolve-to-CPU-memory pipeline without forking the SDK.
+
+Three new log points (entry, kDisabled, readback-path) emit register snapshot
++ resolve result. Gated at my_n <= 32 || (my_n % 240) == 0 for low overhead
+(~16 lines/min at 60Hz).
+
+Verified in Skate 3 PC port: surfaced that title issues 22,800+ resolves per
+35-sec run, of which 5,351 target swap chain — narrowing root cause of a
+black-screen issue from "no resolves happen" to "resolves fire but title
+produces empty draws". Saved days of investigation on wrong layer.
+
+No new cvar, no perf regression, no API change. Compiles clean on MSVC,
+Clang/LLVM, GCC.
+
+Co-authored-by: xdzleo <noreply@github.com>

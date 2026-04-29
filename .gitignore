@@ -1,0 +1,46 @@
+# Build artifacts
+build/CMakeFiles/
+build/CMakeCache.txt
+build/*.lib
+build/*.exe
+build/*.exp
+build/*.obj
+build/*.pdb
+build/*.map
+build/.ninja_*
+build/build.ninja
+build/cmake_install.cmake
+build/rules.ninja
+build/logs/
+
+# Generated recompile output (47MB+, regenerate from source)
+generated/
+
+# Section dumps from XEX (regenerate via rexglue dump)
+dumps/
+
+# ISOs / XEX files (don't commit copyrighted content)
+*.iso
+*.xex
+*.bin
+
+# Build outputs
+out/
+
+# Xenia logs
+xenia.log
+*.log
+
+# Scratch
+scratch/
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~

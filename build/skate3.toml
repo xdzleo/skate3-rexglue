@@ -1,0 +1,55 @@
+log_verbose = false
+log_level = "debug"
+log_to_console = false
+log_flush_level = "warn"
+
+# Skate 3 writes static data at very low guest addresses (e.g. 0x10A4, 0x13418).
+# By default rex protects the first 64 KB of guest virtual memory as a NULL
+# guard, but Skate 3's RenderWare init expects it to be writable. Disabling
+# the NULL guard lets those writes through; downside is real null-pointer
+# bugs in the recompiled code won't trap as cleanly, but for shipping Skate
+# 3 we need the writes.
+protect_zero = false
+
+# Mute audio while we hunt non-audio bugs (Skate 3's audio worker hits an
+# uninitialized pointer in the recompiled code -- harmless for engine tests).
+audio_mute = true
+
+# Cycle 16 verified: our build IS opening 18+ .big files (was filtered by
+# log_level=debug; trace level showed everything). Re-disabled to keep logs
+# manageable; re-enable + bump log_level to "trace" if you need to see
+# NtCreateFile/RtlInit calls again.
+log_noisy = false
+
+# Use XInput backend instead of SDL gamepad -- direct path to Xbox/360
+# controllers on Windows, less translation. SDL falls back to MnK keyboard
+# emulation if no controller seen via SDL.
+input_backend = "xinput"
+
+# Enable Mouse-and-Keyboard controller emulation. Without this the MnK driver
+# refuses every GetCapabilities/GetState call, leaving the game with no
+# usable input device while a real controller isn't detected.
+mnk_mode = true
+
+# CRITICAL: tell the runtime where the game's data assets live (data/big/*.big).
+# Without this, NtCreateFile lookups for d:\data\big\fedata.big etc. fail and
+# the menu UI textures never load. Skate 3's d:/game: paths get mapped here.
+game_data_root = "C:/Users/admin/Downloads/xenia-analysis/skate3-extracted"
+
+# Enable readback resolve so EDRAM-resolve writes are copied back to CPU memory.
+# Without this, the GPU writes via shared-memory compute shaders but the host
+# CPU memory at the resolved address stays empty -- the swap texture sourcing
+# in IssueSwap then reads zeros and the window stays black. Cycle 9 diagnostic
+# confirmed this is the root cause of the black screen in Skate 3.
+d3d12_readback_resolve = true
+
+# Cycle 16: Skate 3 uses pixel-shader memory exports (memexport) for the
+# final framebuffer composite -- pixel shaders write directly to main memory
+# at the swap chain address (0x05258000) instead of resolving from EDRAM.
+# Without this enabled, the GPU does the memexport writes but they stay in
+# GPU buffer; the CPU memory at the swap address stays empty. Confirmed via
+# diag at command_processor.cpp:3192-3201 -- ReadbackPath writes to multiple
+# intermediate addresses (05019000, 04EB1000) but the swap chain at 05258000
+# only gets its INITIAL clear. The 0x05258000-region writes happen via
+# memexport which needs this CPU-readback enabled.
+d3d12_readback_memexport = true

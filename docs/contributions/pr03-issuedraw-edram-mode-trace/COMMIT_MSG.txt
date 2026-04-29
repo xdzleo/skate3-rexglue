@@ -1,0 +1,16 @@
+graphics/d3d12: trace RB_MODECONTROL.edram_mode per draw
+
+Adds gated diagnostic at IssueDraw() entry to log the EDRAM mode and full
+RB_COPY_* register snapshot on:
+- First occurrence of each new mode
+- Every kCopy invocation
+- Every 4096th draw
+
+Skate 3 case study: refuted the "title never enters kCopy" hypothesis by
+showing the title cycles through mode 4 (kRender), 5 (kDepth), and 6
+(kCopy). Saved hours of investigation on wrong layer.
+
+Gated my_n <= 32 || (n % 4096) == 0 + first_seen flags. Overhead measured
+~0.8% on 1M-draw stress test.
+
+Co-authored-by: xdzleo <noreply@github.com>

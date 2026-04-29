@@ -1,0 +1,14 @@
+graphics/d3d12: log IssueCopy_ReadbackResolvePath result
+
+Adds one log line capturing resolve_ok + written_address + written_length
+for the kFast/kSome readback paths. Previously, these paths had zero
+visibility — silent failure was indistinguishable from silent success.
+
+Surfaced via Skate 3 PC port that the title resolves to multiple intermediate
+addresses (0x05019000, 0x04EB1000) plus the swap chain (0x05258000), giving
+us the resolve dest distribution needed to diagnose black-screen issues.
+
+Gated rn <= 32 || (rn % 240) == 0. INFO level. Pairs with the IssueCopy
+entry diagnostic (PR 01).
+
+Co-authored-by: xdzleo <noreply@github.com>

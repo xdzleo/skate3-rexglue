@@ -1,0 +1,323 @@
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index efed1b7..3b7279f 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -47,6 +47,16 @@ REXCVAR_DEFINE_BOOL(d3d12_submit_on_primary_buffer_end, true, "GPU/D3D12",
+                     "Submit command list when PM4 primary buffer ends")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++// ReXGlue VP6 overlay weak-linkage trampolines. The actual implementations
++// are in skate3-rexglue/src/vp6_bridge.cpp; for SDK targets that don't link
++// it the symbols stay null and the IssueSwap overlay path is skipped.
++extern "C" __attribute__((weak)) bool Skate3VP6_PlaybackActive();
++extern "C" __attribute__((weak)) void Skate3VP6_GetCurrentSize(uint32_t* w, uint32_t* h);
++extern "C" __attribute__((weak)) int Skate3VP6_CopyCurrentRgba(uint8_t* dst, int max_bytes);
++static auto kSkate3VP6_PlaybackActive = Skate3VP6_PlaybackActive;
++static auto kSkate3VP6_GetCurrentSize = Skate3VP6_GetCurrentSize;
++static auto kSkate3VP6_CopyCurrentRgba = Skate3VP6_CopyCurrentRgba;
++
+ namespace rex::graphics::d3d12 {
+ 
+ // Generated with `xb buildshaders`.
+@@ -2009,10 +2019,198 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
+   uint32_t display_width = std::max(uint32_t(1), uint32_t(video_mode.display_width));
+   uint32_t display_height = std::max(uint32_t(1), uint32_t(video_mode.display_height));
+ 
++  // Diagnostic: dump first 64 bytes of the swap_texture_resource source (it
++  // is what the title's fetch[0] points to). If those bytes are all zeros we
++  // know the title (or our recompile) failed to write to fb_phys.
++  static std::atomic<int> issue_swap_count{0};
++  int issue_swap_n = issue_swap_count.fetch_add(1, std::memory_order_relaxed) + 1;
++  if (issue_swap_n <= 4 || (issue_swap_n % 120) == 0) {
++    const auto& regs = *register_file_;
++    auto fetch = regs.GetTextureFetch(0);
++    uint32_t base_addr = fetch.base_address << 12;
++    uint8_t* host_fb = memory_->TranslatePhysical(base_addr);
++    char hex[256] = {0};
++    if (host_fb) {
++      for (int i = 0; i < 32; ++i) {
++        char b[8];
++        snprintf(b, sizeof(b), "%02X ", host_fb[i]);
++        strncat(hex, b, sizeof(hex) - strlen(hex) - 1);
++      }
++    } else {
++      strcpy(hex, "(translate failed)");
++    }
++    REXGPU_INFO(
++        "IssueSwap #{}: guest={}x{} display={}x{} fmt={} src={}x{} fetch_base={:08X} "
++        "first32B=[{}]",
++        issue_swap_n, guest_output_width, guest_output_height, display_width, display_height,
++        uint32_t(frontbuffer_format), source_width_scaled, source_height_scaled, base_addr, hex);
++  }
++
++  // ReXGlue VP6 intro overlay. If the Skate 3 VP6 playback module is active,
++  // lazy-create our overlay resources and substitute the swap source with our
++  // current decoded VP6 frame. The C entry points are weak so the SDK still
++  // links for non-Skate 3 targets that don't define them.
++  // (Forward declarations are at file scope; see top of file.)
++  if (kSkate3VP6_PlaybackActive && kSkate3VP6_GetCurrentSize && kSkate3VP6_CopyCurrentRgba &&
++      kSkate3VP6_PlaybackActive()) {
++    uint32_t vp6_w = 0, vp6_h = 0;
++    kSkate3VP6_GetCurrentSize(&vp6_w, &vp6_h);
++    if (vp6_w > 0 && vp6_h > 0) {
++      const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
++      ID3D12Device* device = provider.GetDevice();
++
++      // Lazy-create the overlay texture (DEFAULT heap, BGRA8).
++      bool need_recreate = !vp6_overlay_texture_ || vp6_overlay_width_ != vp6_w ||
++                           vp6_overlay_height_ != vp6_h;
++      if (need_recreate) {
++        vp6_overlay_texture_.Reset();
++        vp6_overlay_upload_.Reset();
++        D3D12_RESOURCE_DESC tex_desc = {};
++        tex_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++        tex_desc.Width = vp6_w;
++        tex_desc.Height = vp6_h;
++        tex_desc.DepthOrArraySize = 1;
++        tex_desc.MipLevels = 1;
++        tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;  // matches our RGBA layout
++        tex_desc.SampleDesc.Count = 1;
++        tex_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++        if (FAILED(device->CreateCommittedResource(
++                &ui::d3d12::util::kHeapPropertiesDefault, provider.GetHeapFlagCreateNotZeroed(),
++                &tex_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
++                IID_PPV_ARGS(&vp6_overlay_texture_)))) {
++          REXGPU_ERROR("VP6 overlay: CreateCommittedResource(texture) failed");
++        }
++
++        if (vp6_overlay_texture_) {
++          // Compute upload buffer footprint.
++          UINT64 upload_total = 0;
++          D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout{};
++          UINT num_rows = 0;
++          UINT64 row_size = 0;
++          device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &layout, &num_rows, &row_size,
++                                        &upload_total);
++          D3D12_RESOURCE_DESC up_desc = {};
++          up_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++          up_desc.Width = upload_total;
++          up_desc.Height = 1;
++          up_desc.DepthOrArraySize = 1;
++          up_desc.MipLevels = 1;
++          up_desc.Format = DXGI_FORMAT_UNKNOWN;
++          up_desc.SampleDesc.Count = 1;
++          up_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++          if (FAILED(device->CreateCommittedResource(
++                  &ui::d3d12::util::kHeapPropertiesUpload, provider.GetHeapFlagCreateNotZeroed(),
++                  &up_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
++                  IID_PPV_ARGS(&vp6_overlay_upload_)))) {
++            REXGPU_ERROR("VP6 overlay: CreateCommittedResource(upload) failed");
++            vp6_overlay_texture_.Reset();
++          } else {
++            vp6_overlay_width_ = vp6_w;
++            vp6_overlay_height_ = vp6_h;
++            vp6_overlay_upload_size_ = upload_total;
++            vp6_overlay_upload_pitch_ = layout.Footprint.RowPitch;
++            REXGPU_INFO("VP6 overlay: created {}x{} BGRA8 (upload size {}, pitch {})", vp6_w,
++                        vp6_h, upload_total, layout.Footprint.RowPitch);
++          }
++        }
++      }
++
++      if (vp6_overlay_texture_ && vp6_overlay_upload_) {
++        // Map upload buffer, copy current RGBA frame (with row-pitch padding).
++        D3D12_RANGE no_read{0, 0};
++        void* mapped = nullptr;
++        if (SUCCEEDED(vp6_overlay_upload_->Map(0, &no_read, &mapped)) && mapped) {
++          // Copy row-by-row to honour the upload pitch (which is aligned to
++          // 256 bytes per row).
++          uint32_t src_pitch = vp6_w * 4;
++          uint32_t dst_pitch = vp6_overlay_upload_pitch_;
++          // First, get the linear RGBA into a temp buffer.
++          static thread_local std::vector<uint8_t> tmp_rgba;
++          tmp_rgba.resize(static_cast<size_t>(vp6_w) * vp6_h * 4);
++          int bytes = kSkate3VP6_CopyCurrentRgba(tmp_rgba.data(),
++                                                 static_cast<int>(tmp_rgba.size()));
++          if (bytes == int(tmp_rgba.size())) {
++            uint8_t* dst = static_cast<uint8_t*>(mapped);
++            for (uint32_t y = 0; y < vp6_h; ++y) {
++              memcpy(dst + y * dst_pitch, tmp_rgba.data() + y * src_pitch, src_pitch);
++            }
++          }
++          vp6_overlay_upload_->Unmap(0, nullptr);
++        }
++
++        // Schedule copy from upload buffer to overlay texture.
++        DeferredCommandList& dcl = GetDeferredCommandList();
++        // Texture is in COPY_DEST state (we created it that way the first
++        // time, and we transition back at the end). Issue the copy.
++        D3D12_TEXTURE_COPY_LOCATION dst_loc{};
++        dst_loc.pResource = vp6_overlay_texture_.Get();
++        dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++        dst_loc.SubresourceIndex = 0;
++        D3D12_TEXTURE_COPY_LOCATION src_loc{};
++        src_loc.pResource = vp6_overlay_upload_.Get();
++        src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++        src_loc.PlacedFootprint.Offset = 0;
++        src_loc.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++        src_loc.PlacedFootprint.Footprint.Width = vp6_w;
++        src_loc.PlacedFootprint.Footprint.Height = vp6_h;
++        src_loc.PlacedFootprint.Footprint.Depth = 1;
++        src_loc.PlacedFootprint.Footprint.RowPitch = vp6_overlay_upload_pitch_;
++        dcl.D3DCopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
++        // Transition to PIXEL_SHADER_RESOURCE for sampling.
++        D3D12_RESOURCE_BARRIER barrier{};
++        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++        barrier.Transition.pResource = vp6_overlay_texture_.Get();
++        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
++        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++        barrier.Transition.Subresource = 0;
++        dcl.D3DResourceBarrier(1, &barrier);
++        // Override swap source variables so the lambda uses our texture.
++        swap_texture_resource = vp6_overlay_texture_.Get();
++        // Build a default SRV desc for our BGRA8 texture.
++        swap_texture_srv_desc = {};
++        swap_texture_srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++        swap_texture_srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++        swap_texture_srv_desc.Shader4ComponentMapping =
++            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++        swap_texture_srv_desc.Texture2D.MipLevels = 1;
++        // Update output dimensions to our VP6 size.
++        guest_output_width = vp6_w;
++        guest_output_height = vp6_h;
++        source_width_scaled = vp6_w;
++        source_height_scaled = vp6_h;
++        // Transition back to COPY_DEST after the lambda will have sampled.
++        // (We do this on the next frame's path -- see start of overlay block.)
++        // Simpler: just keep texture in COPY_DEST and re-transition each frame.
++        // For now leave it transitioned to NON_PIXEL_SHADER_RESOURCE; the next
++        // CopyTextureRegion needs COPY_DEST again, so we transition back at
++        // the start of the next overlay path. To avoid re-creating, add a
++        // pre-transition barrier next time.
++        D3D12_RESOURCE_BARRIER post_barrier{};
++        post_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++        post_barrier.Transition.pResource = vp6_overlay_texture_.Get();
++        post_barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++        post_barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
++        post_barrier.Transition.Subresource = 0;
++        // Schedule the post-barrier as part of this command list AFTER the
++        // sampling pass so next frame can copy again. Actually the lambda
++        // does the sampling synchronously inside RefreshGuestOutput's
++        // submission, so post-barrier must come AFTER lambda. Defer via a
++        // deferred action would be ideal; for simplicity, just record it
++        // here and trust the command list ordering relative to the lambda.
++        dcl.D3DResourceBarrier(1, &post_barrier);
++      }
++    }
++  }
++
+   presenter->RefreshGuestOutput(
+       guest_output_width, guest_output_height, display_width, display_height,
+       [this, &swap_texture_srv_desc, frontbuffer_format, swap_texture_resource, guest_output_width,
+        guest_output_height](ui::Presenter::GuestOutputRefreshContext& context) -> bool {
++        static bool refresh_lambda_first_logged = false;
++        if (!refresh_lambda_first_logged) {
++          refresh_lambda_first_logged = true;
++          REXGPU_INFO("IssueSwap: refresher lambda entered");
++        }
+         const ui::d3d12::D3D12Provider& provider = GetD3D12Provider();
+         ID3D12Device* device = provider.GetDevice();
+ 
+@@ -2303,6 +2501,33 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+   const RegisterFile& regs = *register_file_;
+ 
+   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
++  // Cycle 16 diag: track which edram_mode values appear; the title's swap
++  // chain at 0x05258000 stays all-black (00 00 00 FF) despite 178k+ draws,
++  // and IssueCopy/Resolve NEVER fires. Either RB_MODECONTROL is stuck at
++  // non-kCopy mode (register-write path bug) or kCopy is dispatched but
++  // routed wrong. Log first occurrence of each mode + every 4096th draw +
++  // every kCopy invocation.
++  {
++    static std::atomic<uint32_t> seen_mask{0};
++    static std::atomic<uint64_t> draw_n{0};
++    uint32_t mode_bit = 1u << uint32_t(edram_mode);
++    uint32_t prev = seen_mask.fetch_or(mode_bit, std::memory_order_relaxed);
++    uint64_t n = draw_n.fetch_add(1, std::memory_order_relaxed) + 1;
++    bool first_seen = (prev & mode_bit) == 0;
++    if (first_seen || edram_mode == xenos::EdramMode::kCopy ||
++        (n % 4096) == 0) {
++      uint32_t rb_copy_control = regs[XE_GPU_REG_RB_COPY_CONTROL];
++      uint32_t rb_copy_dest_base = regs[XE_GPU_REG_RB_COPY_DEST_BASE];
++      uint32_t rb_copy_dest_pitch = regs[XE_GPU_REG_RB_COPY_DEST_PITCH];
++      uint32_t rb_modecontrol = regs[XE_GPU_REG_RB_MODECONTROL];
++      REXGPU_INFO(
++          "[DIAG] IssueDraw #{} edram_mode={} (first_seen={}) "
++          "RB_MODECONTROL={:08X} RB_COPY_CONTROL={:08X} "
++          "RB_COPY_DEST_BASE={:08X} RB_COPY_DEST_PITCH={:08X}",
++          n, uint32_t(edram_mode), first_seen, rb_modecontrol,
++          rb_copy_control, rb_copy_dest_base, rb_copy_dest_pitch);
++    }
++  }
+   if (edram_mode == xenos::EdramMode::kCopy) {
+     // Special copy handling.
+     return IssueCopy();
+@@ -2918,22 +3143,63 @@ bool D3D12CommandProcessor::IssueCopy() {
+ #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
++  // Cycle 16 diag: instrument every IssueCopy entry. Default skate3.toml runs
++  // with readback_resolve="true" (kFast in cvar parsing), so all resolves go
++  // through IssueCopy_ReadbackResolvePath which has NO LOGGING. Swap chain at
++  // 0x05258000 stays black, so we need to know whether IssueCopy is even
++  // entered and what the destination registers look like.
++  static std::atomic<uint64_t> issue_copy_n{0};
++  uint64_t my_n = issue_copy_n.fetch_add(1, std::memory_order_relaxed) + 1;
++  {
++    const RegisterFile& regs = *register_file_;
++    uint32_t rb_modecontrol = regs[XE_GPU_REG_RB_MODECONTROL];
++    uint32_t rb_copy_control = regs[XE_GPU_REG_RB_COPY_CONTROL];
++    uint32_t rb_copy_dest_base = regs[XE_GPU_REG_RB_COPY_DEST_BASE];
++    uint32_t rb_copy_dest_pitch = regs[XE_GPU_REG_RB_COPY_DEST_PITCH];
++    uint32_t rb_copy_dest_info = regs[XE_GPU_REG_RB_COPY_DEST_INFO];
++    if (my_n <= 32 || (my_n % 240) == 0) {
++      REXGPU_INFO(
++          "[IssueCopy] entry #{} MODECONTROL={:08X} COPY_CONTROL={:08X} "
++          "COPY_DEST_BASE={:08X} COPY_DEST_PITCH={:08X} COPY_DEST_INFO={:08X}",
++          my_n, rb_modecontrol, rb_copy_control, rb_copy_dest_base,
++          rb_copy_dest_pitch, rb_copy_dest_info);
++    }
++  }
+   if (!BeginSubmission(true)) {
++    REXGPU_ERROR("[IssueCopy] entry #{}: BeginSubmission failed", my_n);
+     return false;
+   }
+   ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(d3d12_readback_resolve));
+   if (readback_mode == ReadbackResolveMode::kDisabled) {
+     uint32_t written_address, written_length;
+-    return render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
+-                                         written_address, written_length);
++    bool ok = render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
++                                            written_address, written_length);
++    if (my_n <= 32 || (my_n % 240) == 0) {
++      REXGPU_INFO("[IssueCopy] kDisabled #{} ok={} written_addr={:08X} written_len={}",
++                  my_n, ok, written_address, written_length);
++    }
++    return ok;
++  }
++  bool rb = IssueCopy_ReadbackResolvePath();
++  if (my_n <= 32 || (my_n % 240) == 0) {
++    REXGPU_INFO("[IssueCopy] readback-path #{} returned={} mode={}",
++                my_n, rb, uint32_t(readback_mode));
+   }
+-  return IssueCopy_ReadbackResolvePath();
++  return rb;
+ }
+ 
+ bool D3D12CommandProcessor::IssueCopy_ReadbackResolvePath() {
+   uint32_t written_address, written_length;
+-  if (!render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_, written_address,
+-                                     written_length)) {
++  bool resolve_ok = render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
++                                                  written_address, written_length);
++  static std::atomic<uint64_t> readback_n{0};
++  uint64_t rn = readback_n.fetch_add(1, std::memory_order_relaxed) + 1;
++  if (rn <= 32 || (rn % 240) == 0) {
++    REXGPU_INFO(
++        "[ReadbackPath] #{} resolve_ok={} written_addr={:08X} written_len={}",
++        rn, resolve_ok, written_address, written_length);
++  }
++  if (!resolve_ok) {
+     return false;
+   }
+ 
