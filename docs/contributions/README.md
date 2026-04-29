@@ -12,20 +12,25 @@ This folder contains patches and proposals ready to submit upstream to [rexglue/
 
 ## Live contributions
 
-All six contributions were submitted to upstream `rexglue/rexglue-sdk` on 2026-04-29:
+Submitted to upstream [`rexglue/rexglue-sdk`](https://github.com/rexglue/rexglue-sdk) — 4 code PRs + 3 design proposals, all targeting the `development` branch (rexglue's feature integration branch — `main` is reserved for release merges):
 
-| # | Title | Type | Live link |
-|---|-------|------|-----------|
-| [01](pr01-issuecopy-diagnostics/) | Add EDRAM resolve diagnostic instrumentation | PR (code) | **[PR #300](https://github.com/rexglue/rexglue-sdk/pull/300)** |
-| [02](pr02-readback-path-logging/) | Log `IssueCopy_ReadbackResolvePath` results | PR (code) | **[PR #301](https://github.com/rexglue/rexglue-sdk/pull/301)** |
-| [03](pr03-issuedraw-edram-mode-trace/) | Trace `RB_MODECONTROL.edram_mode` per draw | PR (code) | **[PR #302](https://github.com/rexglue/rexglue-sdk/pull/302)** |
-| [04](pr04-codegen-config-ea-jumptable/) | Codegen analyzer: detect EA's PPC jump-table pattern | Issue (proposal) | **[Issue #303](https://github.com/rexglue/rexglue-sdk/issues/303)** |
-| [05](pr05-vp6-bridge-template/) | Optional `rex::video::vp6` module (libavcodec wrapper) | Issue (proposal) | **[Issue #304](https://github.com/rexglue/rexglue-sdk/issues/304)** |
-| [06](pr06-defensive-vtable-skip/) | Defensive vtable-NULL-skip helper macro | Issue (proposal) | **[Issue #305](https://github.com/rexglue/rexglue-sdk/issues/305)** |
+| # | Title | Type | Live link | Diff |
+|---|-------|------|-----------|------|
+| [01](pr01-issuecopy-diagnostics/) | Add EDRAM resolve diagnostic instrumentation | PR (code) | **[PR #300 → development](https://github.com/rexglue/rexglue-sdk/pull/300)** | +35/-3 |
+| [02](pr02-readback-path-logging/) | Log `IssueCopy_ReadbackResolvePath` results | PR (code) | **[PR #301 → development](https://github.com/rexglue/rexglue-sdk/pull/301)** | +14/-2 |
+| [03](pr03-issuedraw-edram-mode-trace/) | Trace `RB_MODECONTROL.edram_mode` per draw | PR (code) | **[PR #302 → development](https://github.com/rexglue/rexglue-sdk/pull/302)** | +24/-0 |
+| 07 | **Fix `dcbz` to use 128-byte Xenon cache line** (was incorrectly 32-byte) | PR (code) | **[PR #306 → development](https://github.com/rexglue/rexglue-sdk/pull/306)** | +19/-3 |
+| [04](pr04-codegen-config-ea-jumptable/) | Codegen analyzer: detect EA's PPC jump-table pattern | Issue (proposal) | **[Issue #303](https://github.com/rexglue/rexglue-sdk/issues/303)** | — |
+| [05](pr05-vp6-bridge-template/) | Optional `rex::video::vp6` module (libavcodec wrapper) | Issue (proposal) | **[Issue #304](https://github.com/rexglue/rexglue-sdk/issues/304)** | — |
+| [06](pr06-defensive-vtable-skip/) | Defensive vtable-NULL-skip helper macro | Issue (proposal) | **[Issue #305](https://github.com/rexglue/rexglue-sdk/issues/305)** | — |
 
-PRs 01–03 are code patches against `src/graphics/d3d12/command_processor.cpp` (~73 lines combined). Issues 04–06 are design proposals open for maintainer feedback before implementation.
+PRs 01–03 are diagnostic instrumentation against `src/graphics/d3d12/command_processor.cpp` (~73 lines combined). PR 07 (#306) is a real correctness fix in the codegen builder for the `dcbz` PowerPC instruction — discovered during a sister project port (Final Exam, Xbox 360 XBLA). Issues 04–06 are design proposals open for maintainer feedback before implementation.
 
-A backup branch [`backup/full-skate3-research-20260429`](https://github.com/xdzleo/rexglue-sdk/tree/backup/full-skate3-research-20260429) on the fork preserves the full uncurated research diff (20 unpublished commits + the WIP working tree) for reference.
+A backup branch [`backup/full-skate3-research-20260429`](https://github.com/xdzleo/rexglue-sdk/tree/backup/full-skate3-research-20260429) on the fork preserves the full uncurated research diff for reference.
+
+### Note on initial branch targeting (corrected)
+
+The first three PRs (#300/#301/#302) were initially submitted against `main` by mistake. After noticing that all merged feature PRs in the project target `development` and only release PRs land on `main`, all four PRs were retargeted via `gh pr edit --base development`. They remained `MERGEABLE` (no conflicts) through the retarget. PR #306 (the new dcbz fix) was created directly against `development`.
 
 ## Submitting a PR
 

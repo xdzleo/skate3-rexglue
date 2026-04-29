@@ -70,6 +70,20 @@ cmake --build . --config Release --target skate3
 - **41,429** Xenia HIR dumps captured for diff
 - **40+** Opus 4.7 reverse-engineering sessions consolidated
 
+## Upstream contributions to rexglue-sdk
+
+| # | Type | Status | Title |
+|---|------|--------|-------|
+| [#300](https://github.com/rexglue/rexglue-sdk/pull/300) | PR (code) | OPEN → development | EDRAM resolve diagnostic instrumentation |
+| [#301](https://github.com/rexglue/rexglue-sdk/pull/301) | PR (code) | OPEN → development | log IssueCopy_ReadbackResolvePath result |
+| [#302](https://github.com/rexglue/rexglue-sdk/pull/302) | PR (code) | OPEN → development | trace RB_MODECONTROL.edram_mode per draw |
+| [#306](https://github.com/rexglue/rexglue-sdk/pull/306) | PR (code) | OPEN → development | **fix dcbz to use 128-byte Xenon cache line** (correctness fix) |
+| [#303](https://github.com/rexglue/rexglue-sdk/issues/303) | Issue (proposal) | OPEN | codegen: detect EA's PPC jump-table pattern |
+| [#304](https://github.com/rexglue/rexglue-sdk/issues/304) | Issue (proposal) | OPEN | optional rex::video::vp6 module |
+| [#305](https://github.com/rexglue/rexglue-sdk/issues/305) | Issue (proposal) | OPEN | defensive vtable-NULL skip helper |
+
+See [docs/contributions/](docs/contributions/) for individual PR bodies, patches, and rationale.
+
 ## Acknowledgements
 
 Built on the shoulders of:
